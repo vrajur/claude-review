@@ -34,6 +34,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -46,6 +47,10 @@ LEGEND = (
     "     ~~text~~        disagree / cut this\n"
     "     Any other edit is fine too: Claude compares against the original. -->\n"
 )
+
+# Editor context the IDE extensions attach to your message, e.g.
+# <ide_opened_file>...</ide_opened_file> or <ide_selection>...</ide_selection>.
+IDE_CONTEXT = re.compile(r"<(ide_\w+)>.*?</\1>", re.DOTALL)
 
 
 def env_flag(name, default):
@@ -97,7 +102,7 @@ def last_user_prompt(entries):
             isinstance(b, dict) and b.get("type") == "tool_result" for b in content
         ):
             continue
-        text = text_of(content).strip()
+        text = IDE_CONTEXT.sub("", text_of(content)).strip()
         if text and not text.startswith("<"):  # skip command/system wrappers
             return text
     return ""
