@@ -1,0 +1,8 @@
+{
+  "name": "claude-review",
+  "version": "0.1.0",
+  "description": "Save each Claude reply to a markdown file you can annotate, then hand your markup back with /feedback.",
+  "author": {
+    "name": "Vinay Rajur"
+  }
+}

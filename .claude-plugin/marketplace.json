@@ -1,0 +1,16 @@
+{
+  "name": "claude-review",
+  "owner": {
+    "name": "Vinay Rajur"
+  },
+  "metadata": {
+    "description": "Personal marketplace for the claude-review plugin."
+  },
+  "plugins": [
+    {
+      "name": "claude-review",
+      "source": "./",
+      "description": "Save each Claude reply to a markdown file you can annotate, then hand your markup back with /feedback."
+    }
+  ]
+}
