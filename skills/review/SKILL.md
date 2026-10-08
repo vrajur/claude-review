@@ -1,8 +1,8 @@
 ---
 name: review
-description: Turn reply capture for /feedback on or off, or change whether latest.md opens automatically. Usage - /review on | off | open | noopen | reset | status
+description: Turn reply capture for /feedback on or off, change whether latest.md opens automatically, open latest.md now, or clear the history. Usage - /review on | off | open | noopen | view | clear | reset | status
 disable-model-invocation: true
-argument-hint: on | off | open | noopen | reset | status
+argument-hint: on | off | open | noopen | view | clear | reset | status
 ---
 
 Run this command with the Bash tool from the project root, replacing `<skill base directory>` with the base directory shown above for this skill:

@@ -58,6 +58,8 @@ Optional, in the `env` block of `~/.claude/settings.json`:
 |---|---|
 | `/review off` / `/review on` | stop / resume capturing replies |
 | `/review noopen` / `/review open` | stop / resume opening `latest.md` after each reply |
+| `/review view` | open `latest.md` now |
+| `/review clear` | delete the archived replies in `history/` |
 | `/review status` | show the current settings and where they come from |
 | `/review reset` | forget the switches, back to the `REVIEW_*` variables |
 

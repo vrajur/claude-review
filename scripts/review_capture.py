@@ -26,6 +26,8 @@ Per-project switches - set with the /review command, stored in
 <REVIEW_DIR>/.state.json, and taking precedence over the variables above:
   /review off | on      stop / resume capturing replies
   /review noopen | open change whether latest.md opens after each reply
+  /review view          open latest.md now
+  /review clear         delete the archived replies in history/
   /review status        show the current settings
   /review reset         forget the switches, back to the variables above
 
