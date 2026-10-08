@@ -22,9 +22,16 @@ Configuration - environment variables, easiest set in the "env" block of
                         usual install location on Windows/macOS/Linux)
   REVIEW_DISABLE        1 = turn the hook off without editing settings (default 0)
 
+Per-project switches - set with the /review command, stored in
+<REVIEW_DIR>/.state.json, and taking precedence over the variables above:
+  /review off | on      stop / resume capturing replies
+  /review noopen | open change whether latest.md opens after each reply
+  /review status        show the current settings
+  /review reset         forget the switches, back to the variables above
+
 Per-message overrides - put one of these anywhere in your prompt:
   #noopen               don't open latest.md for this reply (still saved)
-  #open                 open latest.md for this reply even if REVIEW_OPEN is 0
+  #open                 open latest.md for this reply even if opening is off
 
 The hook never blocks Claude and never prints to stdout. Errors go to stderr,
 which shows up only in Claude Code's debug log.
@@ -167,15 +174,42 @@ def open_command(path):
     return [code, "-r", path] if code else None
 
 
-def main():
-    if env_flag("REVIEW_DISABLE", 0):
-        return
-
-    data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))  # tolerate a BOM (PowerShell pipes add one)
-    project = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
+def get_review_dir(cwd=None):
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or cwd or os.getcwd()
     review_dir = os.environ.get("REVIEW_DIR", os.path.join(".claude", "review"))
     if not os.path.isabs(review_dir):
         review_dir = os.path.join(project, review_dir)
+    return os.path.normpath(review_dir)
+
+
+def state_path(review_dir):
+    return os.path.join(review_dir, ".state.json")
+
+
+def load_state(review_dir):
+    """Switches set by /review: {"enabled": bool, "open": bool}, either key optional."""
+    try:
+        with open(state_path(review_dir), encoding="utf-8") as f:
+            state = json.load(f)
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def settings(review_dir):
+    """Effective (enabled, open): /review switches win over environment variables."""
+    state = load_state(review_dir)
+    enabled = state.get("enabled", not env_flag("REVIEW_DISABLE", 0))
+    want_open = state.get("open", env_flag("REVIEW_OPEN", 0))
+    return bool(enabled), bool(want_open)
+
+
+def main():
+    data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))  # tolerate a BOM (PowerShell pipes add one)
+    review_dir = get_review_dir(data.get("cwd"))
+    enabled, want_open = settings(review_dir)
+    if not enabled:
+        return
     history_dir = os.path.join(review_dir, "history")
     os.makedirs(history_dir, exist_ok=True)
 
@@ -211,7 +245,6 @@ def main():
         with open(os.path.join(history_dir, f"{stamp}.md"), "w", encoding="utf-8") as f:
             f.write(doc)
 
-    want_open = env_flag("REVIEW_OPEN", 0)
     words = prompt.lower().split()
     if "#noopen" in words:
         want_open = False

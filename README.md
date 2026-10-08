@@ -49,8 +49,20 @@ Optional, in the `env` block of `~/.claude/settings.json`:
 | `REVIEW_INCLUDE_PROMPT` | `1` | quote your prompt at the top |
 | `REVIEW_DISABLE` | `0` | `1` turns the hook off |
 
+## Switch it on and off
+
+`/review` changes settings for the current project. It stores them in
+`<REVIEW_DIR>/.state.json`, and they take precedence over the variables above:
+
+| Command | Effect |
+|---|---|
+| `/review off` / `/review on` | stop / resume capturing replies |
+| `/review noopen` / `/review open` | stop / resume opening `latest.md` after each reply |
+| `/review status` | show the current settings and where they come from |
+| `/review reset` | forget the switches, back to the `REVIEW_*` variables |
+
 Per message: put `#noopen` in your prompt to skip opening for that reply, or
-`#open` to force it.
+`#open` to force it. These win over everything else.
 
 Tip: in VS Code, set `"workbench.editor.revealIfOpen": true` so reopening
 `latest.md` reuses its existing tab instead of opening a duplicate.
