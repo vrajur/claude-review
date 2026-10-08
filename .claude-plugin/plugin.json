@@ -1,6 +1,6 @@
 {
   "name": "claude-review",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Save each Claude reply to a markdown file you can annotate, then hand your markup back with /feedback.",
   "author": {
     "name": "Vinay Rajur"

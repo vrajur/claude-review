@@ -49,13 +49,12 @@ import shutil
 import subprocess
 import sys
 
-LEGEND = (
-    "<!-- Mark up freely, then run /feedback in Claude Code.\n"
-    "     ==text==        highlight (this matters / agree)\n"
-    "     %%comment%%     your note on the text just before it\n"
-    "     ~~text~~        disagree / cut this\n"
-    "     Any other edit is fine too: Claude compares against the original. -->\n"
-)
+LEGEND = "<!-- ==highlight==  %%comment%%  ~~cut~~  or edit anything, then run /feedback -->\n"
+
+# Prompts longer than PROMPT_FOLD_AT lines show their first PROMPT_PREVIEW
+# lines; the rest goes in a collapsible <details> block.
+PROMPT_FOLD_AT = 10
+PROMPT_PREVIEW = 5
 
 # Editor context the IDE extensions attach to your message, e.g.
 # <ide_opened_file>...</ide_opened_file> or <ide_selection>...</ide_selection>.
@@ -176,6 +175,24 @@ def open_command(path):
     return [code, "-r", path] if code else None
 
 
+def quote(lines):
+    return "\n".join("> " + l for l in lines)
+
+
+def format_prompt(prompt):
+    """Your prompt as a blockquote, folding everything past the first few lines if it's long."""
+    lines = prompt.splitlines()
+    if len(lines) <= PROMPT_FOLD_AT:
+        return quote(lines)
+    rest = lines[PROMPT_PREVIEW:]
+    return (
+        f"{quote(lines[:PROMPT_PREVIEW])}\n\n"
+        f"<details><summary>Show the rest ({len(rest)} more lines)</summary>\n\n"
+        f"{quote(rest)}\n\n"
+        f"</details>"
+    )
+
+
 def get_review_dir(cwd=None):
     project = os.environ.get("CLAUDE_PROJECT_DIR") or cwd or os.getcwd()
     review_dir = os.environ.get("REVIEW_DIR", os.path.join(".claude", "review"))
@@ -224,7 +241,9 @@ def main():
 
     latest = os.path.join(review_dir, "latest.md")
     orig = os.path.join(review_dir, ".latest.orig.md")
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    now = datetime.datetime.now()
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    when = f"{now:%b} {now.day}, {now:%H:%M}"  # e.g. "Oct 8, 13:31" (no %-d on Windows)
 
     # If you annotated the previous reply, keep that version instead of losing it.
     if os.path.exists(latest) and os.path.exists(orig) and sha(latest) != sha(orig):
@@ -233,8 +252,9 @@ def main():
     prompt = last_user_prompt(entries)
     parts = [LEGEND]
     if env_flag("REVIEW_INCLUDE_PROMPT", 1) and prompt:
-        quoted = "\n".join("> " + l for l in prompt.splitlines())
-        parts.append(f"**Your prompt:**\n\n{quoted}\n\n---\n")
+        parts.append(f"# Your prompt\n\n{format_prompt(prompt)}\n\n---\n")
+    # H1 so it sits above any ## / ### headings inside the reply itself.
+    parts.append(f"# Claude's reply · {when}\n")
     parts.append(f"<!-- session {data.get('session_id', '?')} | {stamp} -->\n")
     parts.append(reply + "\n")
     doc = "\n".join(parts)
