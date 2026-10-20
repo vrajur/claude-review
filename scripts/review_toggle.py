@@ -64,7 +64,10 @@ def clear(review_dir):
             shutil.rmtree(path)
         else:
             os.remove(path)
-    return f"Cleared {len(names)} item(s) from {history_dir}"
+    return (
+        f"Cleared {len(names)} item(s) from {history_dir}. "
+        f"feedback.md was kept; its links to annotated copies no longer resolve."
+    )
 
 
 def main(argv):

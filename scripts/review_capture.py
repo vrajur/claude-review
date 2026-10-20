@@ -8,7 +8,9 @@ After every Claude response, saves the reply to a markdown file you can mark up
 Files written (inside REVIEW_DIR, default <project>/.claude/review/):
   latest.md            the newest reply - open this and annotate it
   .latest.orig.md      untouched copy, so Claude can see exactly what you changed
-  history/             older replies (and your annotated versions, if you edited them)
+  history/             older replies: <time>.md as Claude wrote it, plus
+                       <time>-annotated.md if you edited it (same <time>)
+  feedback.md          running log of your marks and # Feedback notes, one entry per reply
 
 Configuration - environment variables, easiest set in the "env" block of
 ~/.claude/settings.json (all optional):
@@ -62,6 +64,11 @@ PROMPT_PREVIEW = 5
 # Editor context the IDE extensions attach to your message, e.g.
 # <ide_opened_file>...</ide_opened_file> or <ide_selection>...</ide_selection>.
 IDE_CONTEXT = re.compile(r"<(ide_\w+)>.*?</\1>", re.DOTALL)
+
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+STAMP_LINE = re.compile(r"^<!-- session .*? \| (\d{8}-\d{6}) -->$", re.MULTILINE)
+MARKS = re.compile(r"==[^=\n]+==|%%[^%]+?%%|~~[^~\n]+~~")
+CONTEXT_CHARS = 60  # how much of the line before a %%comment%% to show with it
 
 
 def env_flag(name, default):
@@ -196,6 +203,56 @@ def format_prompt(prompt):
     )
 
 
+def read_text(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def split_feedback(doc):
+    """(everything above the # Feedback heading, what's written under it)."""
+    head, sep, tail = doc.rpartition("\n# Feedback\n")
+    if not sep:
+        return doc, ""
+    return head, HTML_COMMENT.sub("", tail).strip()
+
+
+def marks_in(text):
+    """[(text just before the mark on its line, mark)], ignoring HTML comments."""
+    text = HTML_COMMENT.sub("", text)
+    found = []
+    for m in MARKS.finditer(text):
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        before = text[max(line_start, m.start() - CONTEXT_CHARS):m.start()].strip()
+        found.append((before, m.group()))
+    return found
+
+
+def log_entry(annotated, original, archived_name):
+    """Markdown for feedback.md: the marks you added and your # Feedback notes.
+    None if you only made plain edits (the archived copy still has those)."""
+    body, notes = split_feedback(annotated)
+    already = {m for _, m in marks_in(split_feedback(original)[0])}  # markup Claude wrote itself
+    added = [(before, m) for before, m in marks_in(body) if m not in already]
+    if not added and not notes:
+        return None
+
+    when = re.search(r"^# Claude's reply · (.+)$", annotated, re.MULTILINE)
+    prompt = re.search(r"^# Your prompt\n\n> (.*)$", annotated, re.MULTILINE)
+    title = when.group(1) if when else archived_name
+    if prompt and prompt.group(1).strip():
+        snippet = prompt.group(1).strip()
+        title += f' · "{snippet[:70]}{"…" if len(snippet) > 70 else ""}"'
+
+    lines = [f"## {title}\n", f"[annotated copy](history/{archived_name})\n"]
+    for before, m in added:
+        lines.append(f"- {m}" + (f" ← …{before}" if before and m.startswith("%%") else ""))
+    if added:
+        lines.append("")
+    if notes:
+        lines.append(notes + "\n")
+    return "\n".join(lines) + "\n"
+
+
 def get_review_dir(cwd=None):
     project = os.environ.get("CLAUDE_PROJECT_DIR") or cwd or os.getcwd()
     review_dir = os.environ.get("REVIEW_DIR", os.path.join(".claude", "review"))
@@ -248,9 +305,24 @@ def main():
     stamp = now.strftime("%Y%m%d-%H%M%S")
     when = f"{now:%b} {now.day}, {now:%H:%M}"  # e.g. "Oct 8, 13:31" (no %-d on Windows)
 
-    # If you annotated the previous reply, keep that version instead of losing it.
+    # If you annotated the previous reply, keep that version instead of losing it,
+    # and add what you wrote to the running log in feedback.md.
     if os.path.exists(latest) and os.path.exists(orig) and sha(latest) != sha(orig):
-        shutil.copy2(latest, os.path.join(history_dir, f"{stamp}-prev-annotated.md"))
+        original = read_text(orig)
+        # Name it after the reply you annotated, so it sorts next to that reply's
+        # plain copy. The stamp comes from the untouched original, which you can't
+        # have edited by accident.
+        prev = STAMP_LINE.search(original)
+        archived = f"{prev.group(1)}-annotated.md" if prev else f"{stamp}-prev-annotated.md"
+        shutil.copy2(latest, os.path.join(history_dir, archived))
+        entry = log_entry(read_text(latest), original, archived)
+        if entry:
+            log = os.path.join(review_dir, "feedback.md")
+            new_log = not os.path.exists(log)
+            with open(log, "a", encoding="utf-8") as f:
+                if new_log:
+                    f.write("# Feedback log\n\nYour notes on each reply, oldest first.\n\n")
+                f.write(entry)
 
     prompt = last_user_prompt(entries)
     parts = [LEGEND]

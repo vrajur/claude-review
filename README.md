@@ -16,6 +16,11 @@ Claude responds to each mark in order.
 For notes on the reply as a whole, write under the `# Feedback` heading at the
 bottom of the file.
 
+When the next reply replaces `latest.md`, your annotated copy is archived in
+`history/`, and the marks you added plus your `# Feedback` notes are appended
+to `.claude/review/feedback.md`, so you can look back over everything in one
+place.
+
 All three render natively in Obsidian (`%%…%%` is Obsidian's comment syntax:
 visible while editing, hidden in reading view).
 

@@ -7,6 +7,12 @@ only refreshes an installed plugin when the version changes.
 
 - `latest.md` ends with an empty `# Feedback` section for notes on the reply
   as a whole; `/feedback` responds to it last.
+- `feedback.md` keeps a running log of your annotations: each time a new reply
+  replaces one you marked up, the marks you added and your `# Feedback` notes
+  are appended, with a link to the archived copy.
+- Annotated copies in `history/` are named after the reply they belong to
+  (`<time>-annotated.md`, next to `<time>.md`) instead of the time the next
+  reply arrived (`<time>-prev-annotated.md`).
 
 ## 0.3.0 - 2026-10-08
 
