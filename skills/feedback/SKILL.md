@@ -13,6 +13,7 @@ I've marked up one of your earlier replies. Respond to my annotations.
    - `%%comment%%` - my note about the text immediately before it. (Older files may use `[[comment]]` for the same thing.)
    - `~~text~~` - I disagree with this or want it removed.
    - Text I added, deleted or rewrote - treat it as a correction or preference.
-4. Reply by going through my annotations in order. For each one, quote a few words of the part I marked so it's clear which spot you mean, then respond: answer the question, defend or revise the point, expand on it, or act on it.
+   - Anything I wrote under the `# Feedback` heading at the bottom - my notes on the reply as a whole.
+4. Reply by going through my annotations in order, ending with the `# Feedback` notes if there are any. For each one, quote a few words of the part I marked so it's clear which spot you mean, then respond: answer the question, defend or revise the point, expand on it, or act on it.
 5. If my notes ask for changes to code or files, make them.
 6. Finish with one or two sentences on what changed in your overall view, if anything did.

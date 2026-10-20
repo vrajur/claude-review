@@ -51,6 +51,9 @@ import sys
 
 LEGEND = "<!-- ==highlight==  %%comment%%  ~~cut~~  or edit anything, then run /feedback -->\n"
 
+# Empty section at the bottom for notes on the reply as a whole.
+FEEDBACK = "---\n\n# Feedback\n\n<!-- overall notes on the whole reply -->\n"
+
 # Prompts longer than PROMPT_FOLD_AT lines show their first PROMPT_PREVIEW
 # lines; the rest goes in a collapsible <details> block.
 PROMPT_FOLD_AT = 10
@@ -257,6 +260,7 @@ def main():
     parts.append(f"# Claude's reply · {when}\n")
     parts.append(f"<!-- session {data.get('session_id', '?')} | {stamp} -->\n")
     parts.append(reply + "\n")
+    parts.append(FEEDBACK)
     doc = "\n".join(parts)
 
     for path in (latest, orig):

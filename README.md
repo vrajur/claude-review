@@ -13,6 +13,9 @@ Claude responds to each mark in order.
 | `~~text~~` | disagree / cut this |
 | any other edit | treated as a correction or preference |
 
+For notes on the reply as a whole, write under the `# Feedback` heading at the
+bottom of the file.
+
 All three render natively in Obsidian (`%%…%%` is Obsidian's comment syntax:
 visible while editing, hidden in reading view).
 
