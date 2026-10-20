@@ -3,7 +3,7 @@
 Bump `version` in `.claude-plugin/plugin.json` with every release; Claude Code
 only refreshes an installed plugin when the version changes.
 
-## Unreleased
+## 0.4.0 - 2026-10-19
 
 - `latest.md` ends with an empty `# Feedback` section for notes on the reply
   as a whole; `/feedback` responds to it last.
