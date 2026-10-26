@@ -3,6 +3,15 @@
 Bump `version` in `.claude-plugin/plugin.json` with every release; Claude Code
 only refreshes an installed plugin when the version changes.
 
+## 0.4.1 - 2026-10-26
+
+- `latest.md` captures everything Claude said since your prompt, not just the
+  last message. When a reply has several messages (text between tool calls),
+  each gets a `## Message N of M` heading, separated by `---`.
+- `# Your prompt` shows the prompt that started the turn, including slash
+  commands with their arguments (e.g. `/claude-review:feedback ...`), instead
+  of falling back to an older typed prompt.
+
 ## 0.4.0 - 2026-10-19
 
 - `latest.md` ends with an empty `# Feedback` section for notes on the reply
