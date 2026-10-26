@@ -66,7 +66,9 @@ PROMPT_PREVIEW = 5
 IDE_CONTEXT = re.compile(r"<(ide_\w+)>.*?</\1>", re.DOTALL)
 
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-STAMP_LINE = re.compile(r"^<!-- session .*? \| (\d{8}-\d{6}) -->$", re.MULTILINE)
+COMMAND_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
+COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+STAMP_LINE =re.compile(r"^<!-- session .*? \| (\d{8}-\d{6}) -->$", re.MULTILINE)
 MARKS = re.compile(r"==[^=\n]+==|%%[^%]+?%%|~~[^~\n]+~~")
 CONTEXT_CHARS = 60  # how much of the line before a %%comment%% to show with it
 
@@ -110,38 +112,60 @@ def read_transcript(path):
     return entries
 
 
-def last_user_prompt(entries):
-    """Most recent message you typed (skips tool results and meta entries)."""
-    for e in reversed(entries):
-        if e.get("type") != "user" or e.get("isMeta"):
+def has_block(content, kind):
+    return isinstance(content, list) and any(
+        isinstance(b, dict) and b.get("type") == kind for b in content
+    )
+
+
+def is_prompt(e):
+    """A message you sent, as opposed to a tool result or injected context."""
+    if e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain"):
+        return False
+    return not has_block((e.get("message") or {}).get("content"), "tool_result")
+
+
+def prompt_text(e):
+    """Your prompt as you typed it. Slash commands are stored as
+    <command-name>/x</command-name><command-args>...</command-args>."""
+    text = IDE_CONTEXT.sub("", text_of((e.get("message") or {}).get("content"))).strip()
+    name = COMMAND_NAME.search(text)
+    if name:
+        args = COMMAND_ARGS.search(text)
+        return f"{name.group(1).strip()} {args.group(1).strip() if args else ''}".strip()
+    return "" if text.startswith("<") else text  # other system wrappers
+
+
+def current_turn(entries):
+    """(your prompt, [Claude's messages]) for the latest turn. A message is a run
+    of text between tool calls, so a turn that talks, edits a file, then talks
+    again gives two."""
+    start = next((i for i in range(len(entries) - 1, -1, -1) if is_prompt(entries[i])), None)
+    prompt = prompt_text(entries[start]) if start is not None else ""
+    messages, current = [], []
+    for e in entries[(start or -1) + 1:]:
+        if e.get("isSidechain") or e.get("type") not in ("assistant", "user"):
             continue
         content = (e.get("message") or {}).get("content")
-        if isinstance(content, list) and any(
-            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-        ):
-            continue
-        text = IDE_CONTEXT.sub("", text_of(content)).strip()
-        if text and not text.startswith("<"):  # skip command/system wrappers
-            return text
-    return ""
+        t = text_of(content).strip() if e.get("type") == "assistant" else ""
+        if t:
+            current.append(t)
+        if has_block(content, "tool_use") or has_block(content, "tool_result"):
+            if current:
+                messages.append("\n\n".join(current))
+            current = []
+    if current:
+        messages.append("\n\n".join(current))
+    return prompt, messages
 
 
-def last_reply_from_transcript(entries):
-    """Fallback: all assistant text since your last prompt."""
-    chunks = []
-    for e in reversed(entries):
-        if e.get("type") == "user":
-            content = (e.get("message") or {}).get("content")
-            is_tool_result = isinstance(content, list) and any(
-                isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-            )
-            if not is_tool_result and not e.get("isMeta"):
-                break
-        elif e.get("type") == "assistant":
-            t = text_of((e.get("message") or {}).get("content")).strip()
-            if t:
-                chunks.append(t)
-    return "\n\n".join(reversed(chunks))
+def format_reply(messages):
+    """One message as is; several split by --- with a heading each, so they show
+    up in an outline / table of contents."""
+    if len(messages) == 1:
+        return messages[0]
+    n = len(messages)
+    return "\n\n---\n\n".join(f"## Message {i} of {n}\n\n{m}" for i, m in enumerate(messages, 1))
 
 
 def sha(path):
@@ -293,9 +317,12 @@ def main():
     os.makedirs(history_dir, exist_ok=True)
 
     entries = read_transcript(data.get("transcript_path"))
-    reply = (data.get("last_assistant_message") or "").strip()
-    if not reply:
-        reply = last_reply_from_transcript(entries).strip()
+    prompt, messages = current_turn(entries)
+    # The transcript may not have the final message written yet when the hook fires.
+    final = (data.get("last_assistant_message") or "").strip()
+    if final and not (messages and messages[-1].endswith(final)):
+        messages.append(final)
+    reply = format_reply(messages) if messages else ""
     if not reply or len(reply) < env_int("REVIEW_MIN_CHARS", 0):
         return
 
@@ -324,7 +351,6 @@ def main():
                     f.write("# Feedback log\n\nYour notes on each reply, oldest first.\n\n")
                 f.write(entry)
 
-    prompt = last_user_prompt(entries)
     parts = [LEGEND]
     if env_flag("REVIEW_INCLUDE_PROMPT", 1) and prompt:
         parts.append(f"# Your prompt\n\n{format_prompt(prompt)}\n\n---\n")
