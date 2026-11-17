@@ -8,8 +8,10 @@ After every Claude response, saves the reply to a markdown file you can mark up
 Files written (inside REVIEW_DIR, default <project>/.claude/review/):
   latest.md            the newest reply - open this and annotate it
   .latest.orig.md      untouched copy, so Claude can see exactly what you changed
-  history/             older replies: <time>.md as Claude wrote it, plus
-                       <time>-annotated.md if you edited it (same <time>)
+  history/             every reply as <time>-<first words of your prompt>.md,
+                       plus <same name>-annotated.md if you marked up latest.md.
+                       You can also mark up a history file in place; /feedback
+                       rebuilds the original from the session transcript.
   feedback.md          running log of your marks and # Feedback notes, one entry per reply
 
 Configuration - environment variables, easiest set in the "env" block of
@@ -71,6 +73,10 @@ COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 STAMP_LINE =re.compile(r"^<!-- session .*? \| (\d{8}-\d{6}) -->$", re.MULTILINE)
 MARKS = re.compile(r"==[^=\n]+==|%%[^%]+?%%|~~[^~\n]+~~")
 CONTEXT_CHARS = 60  # how much of the line before a %%comment%% to show with it
+
+# History files are named <stamp>-<first few words of your prompt>.md.
+SLUG_WORDS = 6
+SLUG_CHARS = 50
 
 
 def env_flag(name, default):
@@ -277,6 +283,56 @@ def log_entry(annotated, original, archived_name):
     return "\n".join(lines) + "\n"
 
 
+def slug(prompt):
+    """A few words of your prompt for the history filename, so you can find a
+    reply with Ctrl+P. Slash commands drop their plugin prefix:
+    "/claude-review:feedback" -> "feedback"."""
+    text = re.sub(r"^/(?:[\w-]+:)?", "", prompt.strip())
+    words = re.findall(r"[a-z0-9]+", text.lower())[:SLUG_WORDS]
+    return "-".join(words)[:SLUG_CHARS].strip("-")
+
+
+def history_name(stamp, prompt, reply=""):
+    """<stamp>-<slug>.md. A slash command like /feedback says little on its own,
+    so the first words of the reply follow it: feedback-your-notes-are-all."""
+    s = slug(prompt)
+    if prompt.strip().startswith("/") and reply:
+        s = "-".join(p for p in (s, slug(reply)) if p)[:SLUG_CHARS].strip("-")
+    return f"{stamp}-{s}.md" if s else f"{stamp}.md"
+
+
+def find_history(history_dir, stamp):
+    """Filename of the reply saved at stamp (not an -annotated copy), or None."""
+    try:
+        names = sorted(os.listdir(history_dir))
+    except OSError:
+        return None
+    return next((n for n in names if n.startswith(stamp) and n.endswith(".md")
+                 and not n.endswith("-annotated.md")), None)
+
+
+def render(prompt, messages, session_id, stamp, now):
+    """The markdown file for one reply - shared with review_diff.py, which
+    rebuilds originals from the transcript and needs the exact same output."""
+    parts = [LEGEND]
+    if env_flag("REVIEW_INCLUDE_PROMPT", 1) and prompt:
+        parts.append(f"# Your prompt\n\n{format_prompt(prompt)}\n\n---\n")
+    # H1 so it sits above any ## / ### headings inside the reply itself.
+    parts.append(f"# Claude's reply · {now:%b} {now.day}, {now:%H:%M}\n")  # no %-d on Windows
+    parts.append(f"<!-- session {session_id} | {stamp} -->\n")
+    parts.append(format_reply(messages) + "\n")
+    parts.append(FEEDBACK)
+    return "\n".join(parts)
+
+
+def mark_sent(review_dir, name, digest):
+    """Remember that this version of history/<name> has been handled, so
+    /feedback doesn't pick it again or log it twice."""
+    state = load_state(review_dir)
+    state.setdefault("sent", {})[name] = digest
+    save_state(review_dir, state)
+
+
 def get_review_dir(cwd=None):
     project = os.environ.get("CLAUDE_PROJECT_DIR") or cwd or os.getcwd()
     review_dir = os.environ.get("REVIEW_DIR", os.path.join(".claude", "review"))
@@ -297,6 +353,13 @@ def load_state(review_dir):
         return state if isinstance(state, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def save_state(review_dir, state):
+    os.makedirs(review_dir, exist_ok=True)
+    with open(state_path(review_dir), "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+        f.write("\n")
 
 
 def settings(review_dir):
@@ -330,7 +393,6 @@ def main():
     orig = os.path.join(review_dir, ".latest.orig.md")
     now = datetime.datetime.now()
     stamp = now.strftime("%Y%m%d-%H%M%S")
-    when = f"{now:%b} {now.day}, {now:%H:%M}"  # e.g. "Oct 8, 13:31" (no %-d on Windows)
 
     # If you annotated the previous reply, keep that version instead of losing it,
     # and add what you wrote to the running log in feedback.md.
@@ -340,8 +402,13 @@ def main():
         # plain copy. The stamp comes from the untouched original, which you can't
         # have edited by accident.
         prev = STAMP_LINE.search(original)
-        archived = f"{prev.group(1)}-annotated.md" if prev else f"{stamp}-prev-annotated.md"
+        if prev:
+            plain = find_history(history_dir, prev.group(1))
+            archived = f"{plain[:-3] if plain else prev.group(1)}-annotated.md"
+        else:
+            archived = f"{stamp}-prev-annotated.md"
         shutil.copy2(latest, os.path.join(history_dir, archived))
+        mark_sent(review_dir, archived, sha(latest))  # logged below, so /feedback skips it
         entry = log_entry(read_text(latest), original, archived)
         if entry:
             log = os.path.join(review_dir, "feedback.md")
@@ -351,22 +418,14 @@ def main():
                     f.write("# Feedback log\n\nYour notes on each reply, oldest first.\n\n")
                 f.write(entry)
 
-    parts = [LEGEND]
-    if env_flag("REVIEW_INCLUDE_PROMPT", 1) and prompt:
-        parts.append(f"# Your prompt\n\n{format_prompt(prompt)}\n\n---\n")
-    # H1 so it sits above any ## / ### headings inside the reply itself.
-    parts.append(f"# Claude's reply · {when}\n")
-    parts.append(f"<!-- session {data.get('session_id', '?')} | {stamp} -->\n")
-    parts.append(reply + "\n")
-    parts.append(FEEDBACK)
-    doc = "\n".join(parts)
+    doc = render(prompt, messages, data.get("session_id", "?"), stamp, now)
 
     for path in (latest, orig):
         with open(path, "w", encoding="utf-8") as f:
             f.write(doc)
 
     if env_flag("REVIEW_KEEP_HISTORY", 1):
-        with open(os.path.join(history_dir, f"{stamp}.md"), "w", encoding="utf-8") as f:
+        with open(os.path.join(history_dir, history_name(stamp, prompt, messages[0])), "w", encoding="utf-8") as f:
             f.write(doc)
 
     words = prompt.lower().split()
