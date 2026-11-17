@@ -10,10 +10,12 @@ I've marked up one of your earlier replies. Respond to my annotations.
 1. Find what I changed. Run this with the Bash tool from the project root, replacing `<skill base directory>` with the base directory shown above for this skill:
 
    ```
-   python3 "<skill base directory>/../../scripts/review_diff.py" $ARGUMENTS
+   python3 "<skill base directory>/../../scripts/review_diff.py" --session "${CLAUDE_SESSION_ID}" $ARGUMENTS
    ```
 
-   If I didn't name a file but my message shows I have a file from the review folder open in the IDE (`latest.md`, or anything in `history/`), add `--open "<that path>"`, so the script tries that file first.
+   If I didn't name a file but my message shows I have a file from the review folder open in the IDE (`latest.md`, or anything in `sessions/` or `history/`), add `--open "<that path>"`, so the script tries that file first.
+
+   If the script finds nothing but lists marked-up files from other conversations, tell me which ones and stop. Don't respond to them unless I name one.
 
    The script picks the file, finds the untouched original, and prints the file's path, where the original came from, and a diff. Every difference is feedback from me, whether or not it uses the markup below. Read the annotated file too, for context. If the file isn't `latest.md`, start your reply with one line naming it.
 

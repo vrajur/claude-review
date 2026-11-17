@@ -3,6 +3,29 @@
 Bump `version` in `.claude-plugin/plugin.json` with every release; Claude Code
 only refreshes an installed plugin when the version changes.
 
+## 0.6.0 - 2026-11-16
+
+- Several conversations can run in one project. Each gets its own
+  `sessions/<MMDD>-<first words of its first prompt>/latest.md`, so they no
+  longer overwrite each other. `latest.md` still shows the newest reply from
+  any conversation.
+- If you've marked up `latest.md` and not sent it, a reply from another
+  conversation no longer replaces it (and no longer hides your notes from
+  `/feedback`). It goes only to that conversation's own folder until you run
+  `/feedback`.
+- `/feedback` looks in its own conversation first: its `sessions/` file, then
+  `latest.md` if the reply there is its own, then history files, newest of its
+  own first. If it finds nothing, it lists marked-up files waiting in other
+  conversations.
+- `feedback.md` entries name the conversation they came from.
+- `/review view` opens this conversation's newest reply. `/review status` shows
+  this conversation's folder. `/review clear` also removes the `sessions/`
+  folders.
+- `/review reset` forgets only the on/off and open switches, not the record of
+  what's been sent.
+- Writes are atomic and locked, so two conversations finishing together don't
+  corrupt `.state.json` or interleave lines in `feedback.md`.
+
 ## 0.5.0 - 2026-11-16
 
 - Mark up any reply in `history/` in place and run `/feedback`; no copying.

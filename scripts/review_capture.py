@@ -6,8 +6,13 @@ After every Claude response, saves the reply to a markdown file you can mark up
 (highlights, comments, strikethroughs), then hand back to Claude with /feedback.
 
 Files written (inside REVIEW_DIR, default <project>/.claude/review/):
-  latest.md            the newest reply - open this and annotate it
+  latest.md            the newest reply from any conversation - open this and annotate it
   .latest.orig.md      untouched copy, so Claude can see exactly what you changed
+  sessions/<name>/     latest.md and .latest.orig.md for one conversation, named
+                       <MMDD>-<first words of its first prompt>, so conversations
+                       running side by side don't overwrite each other. If you've
+                       marked up latest.md and not sent it, a reply from another
+                       conversation goes only to its own folder until you do.
   history/             every reply as <time>-<first words of your prompt>.md,
                        plus <same name>-annotated.md if you marked up latest.md.
                        You can also mark up a history file in place; /feedback
@@ -43,6 +48,7 @@ The hook never blocks Claude and never prints to stdout. Errors go to stderr,
 which shows up only in Claude Code's debug log.
 """
 
+import contextlib
 import datetime
 import hashlib
 import json
@@ -52,6 +58,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 LEGEND = "<!-- ==highlight==  %%comment%%  ~~cut~~  or edit anything, then run /feedback -->\n"
 
@@ -70,7 +77,8 @@ IDE_CONTEXT = re.compile(r"<(ide_\w+)>.*?</\1>", re.DOTALL)
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 COMMAND_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
 COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
-STAMP_LINE =re.compile(r"^<!-- session .*? \| (\d{8}-\d{6}) -->$", re.MULTILINE)
+STAMP_LINE = re.compile(r"^<!-- session .*? \| (\d{8}-\d{6}) -->$", re.MULTILINE)
+SESSION_LINE = re.compile(r"^<!-- session (\S+) \|", re.MULTILINE)
 MARKS = re.compile(r"==[^=\n]+==|%%[^%]+?%%|~~[^~\n]+~~")
 CONTEXT_CHARS = 60  # how much of the line before a %%comment%% to show with it
 
@@ -257,9 +265,10 @@ def marks_in(text):
     return found
 
 
-def log_entry(annotated, original, archived_name):
+def log_entry(annotated, original, archived_name, thread=None):
     """Markdown for feedback.md: the marks you added and your # Feedback notes.
-    None if you only made plain edits (the archived copy still has those)."""
+    None if you only made plain edits (the archived copy still has those).
+    thread names the conversation's sessions/ folder, if known."""
     body, notes = split_feedback(annotated)
     already = {m for _, m in marks_in(split_feedback(original)[0])}  # markup Claude wrote itself
     added = [(before, m) for before, m in marks_in(body) if m not in already]
@@ -273,7 +282,10 @@ def log_entry(annotated, original, archived_name):
         snippet = prompt.group(1).strip()
         title += f' · "{snippet[:70]}{"…" if len(snippet) > 70 else ""}"'
 
-    lines = [f"## {title}\n", f"[annotated copy](history/{archived_name})\n"]
+    link = f"[annotated copy](history/{archived_name})"
+    if thread:
+        link += f" · conversation `{thread}`"
+    lines = [f"## {title}\n", link + "\n"]
     for before, m in added:
         lines.append(f"- {m}" + (f" ← …{before}" if before and m.startswith("%%") else ""))
     if added:
@@ -325,12 +337,155 @@ def render(prompt, messages, session_id, stamp, now):
     return "\n".join(parts)
 
 
-def mark_sent(review_dir, name, digest):
-    """Remember that this version of history/<name> has been handled, so
-    /feedback doesn't pick it again or log it twice."""
+def sent_key(review_dir, path):
+    """Key for a file in the "sent" record: the filename for history files (as
+    before), the path inside REVIEW_DIR for latest.md files, since every
+    conversation folder has one."""
+    if os.path.basename(path) == "latest.md":
+        return os.path.relpath(path, review_dir).replace(os.sep, "/")
+    return os.path.basename(path)
+
+
+def already_sent(review_dir, path):
+    return load_state(review_dir).get("sent", {}).get(sent_key(review_dir, path)) == sha(path)
+
+
+def mark_sent(review_dir, path):
+    """Remember that this version of the file has been handled, so /feedback
+    doesn't pick it again or log it twice."""
     state = load_state(review_dir)
-    state.setdefault("sent", {})[name] = digest
+    state.setdefault("sent", {})[sent_key(review_dir, path)] = sha(path)
     save_state(review_dir, state)
+
+
+def write_text(path, text):
+    """Write all at once (temp file, then rename), so a reader never sees half a file."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+@contextlib.contextmanager
+def locked(review_dir, wait=10, stale=30):
+    """Let one hook or /feedback at a time change the review folder, so two
+    conversations finishing together don't trip over each other. Gives up
+    waiting after `wait` seconds and goes ahead rather than hang the session."""
+    os.makedirs(review_dir, exist_ok=True)
+    path = os.path.join(review_dir, ".lock")
+    deadline = time.time() + wait
+    fd = None
+    while fd is None:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except (FileExistsError, PermissionError):  # Windows: PermissionError while it's being deleted
+            try:
+                if time.time() - os.path.getmtime(path) > stale:  # left behind by a crash
+                    os.remove(path)
+                    continue
+            except OSError:
+                continue
+            if time.time() > deadline:
+                break
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def append_log(review_dir, entry):
+    log = os.path.join(review_dir, "feedback.md")
+    new_log = not os.path.exists(log)
+    with open(log, "a", encoding="utf-8") as f:
+        if new_log:
+            f.write("# Feedback log\n\nYour notes on each reply, oldest first.\n\n")
+        f.write(entry)
+
+
+def session_of(text):
+    m = SESSION_LINE.search(text or "")
+    return m.group(1) if m else None
+
+
+def orig_of(latest):
+    """The untouched copy that sits next to a latest.md."""
+    return os.path.join(os.path.dirname(latest), ".latest.orig.md")
+
+
+def owner_of(latest):
+    """Session id of the reply in a latest.md, read from its untouched copy."""
+    try:
+        return session_of(read_text(orig_of(latest)))
+    except OSError:
+        return None
+
+
+def is_annotated(latest):
+    orig = orig_of(latest)
+    return os.path.exists(latest) and os.path.exists(orig) and sha(latest) != sha(orig)
+
+
+def thread_name(review_dir, session_id):
+    """Name of a conversation's sessions/ folder, or None if it has none yet."""
+    return load_state(review_dir).get("sessions", {}).get(session_id)
+
+
+def thread_dir(review_dir, session_id, prompt="", reply="", now=None):
+    """sessions/<name>/ for a conversation, naming it on its first reply:
+    <MMDD>-<first words of the prompt>, e.g. 1116-refactor-the-auth-flow."""
+    state = load_state(review_dir)
+    threads = state.setdefault("sessions", {})
+    name = threads.get(session_id)
+    if not name:
+        now = now or datetime.datetime.now()
+        base = history_name(f"{now:%m%d}", prompt, reply)[:-3]
+        taken = set(threads.values())
+        name, n = base, 2
+        while name in taken or os.path.exists(os.path.join(review_dir, "sessions", name)):
+            name, n = f"{base}-{n}", n + 1
+        threads[session_id] = name
+        save_state(review_dir, state)
+    path = os.path.join(review_dir, "sessions", name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def unique(directory, name):
+    """name, or name with -2, -3... before .md if that file already exists."""
+    stem, n = name[:-3], 2
+    while os.path.exists(os.path.join(directory, name)):
+        name, n = f"{stem}-{n}.md", n + 1
+    return name
+
+
+def archive(review_dir, latest, stamp):
+    """Keep a marked-up latest.md in history/ before it's replaced, and add what
+    you wrote to the running log in feedback.md."""
+    history_dir = os.path.join(review_dir, "history")
+    original = read_text(orig_of(latest))
+    # Name it after the reply you annotated, so it sorts next to that reply's
+    # plain copy. The stamp comes from the untouched original, which you can't
+    # have edited by accident.
+    prev = STAMP_LINE.search(original)
+    if prev:
+        plain = find_history(history_dir, prev.group(1))
+        name = f"{plain[:-3] if plain else prev.group(1)}-annotated.md"
+    else:
+        name = f"{stamp}-prev-annotated.md"
+    archived = os.path.join(history_dir, unique(history_dir, name))
+    shutil.copy2(latest, archived)
+    mark_sent(review_dir, archived)  # logged below, so /feedback skips it
+    annotated = read_text(latest)
+    entry = log_entry(annotated, original, os.path.basename(archived),
+                      thread_name(review_dir, session_of(original)))
+    if entry:
+        append_log(review_dir, entry)
 
 
 def get_review_dir(cwd=None):
@@ -357,9 +512,7 @@ def load_state(review_dir):
 
 def save_state(review_dir, state):
     os.makedirs(review_dir, exist_ok=True)
-    with open(state_path(review_dir), "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-        f.write("\n")
+    write_text(state_path(review_dir), json.dumps(state, indent=2) + "\n")
 
 
 def settings(review_dir):
@@ -376,8 +529,6 @@ def main():
     enabled, want_open = settings(review_dir)
     if not enabled:
         return
-    history_dir = os.path.join(review_dir, "history")
-    os.makedirs(history_dir, exist_ok=True)
 
     entries = read_transcript(data.get("transcript_path"))
     prompt, messages = current_turn(entries)
@@ -389,53 +540,49 @@ def main():
     if not reply or len(reply) < env_int("REVIEW_MIN_CHARS", 0):
         return
 
-    latest = os.path.join(review_dir, "latest.md")
-    orig = os.path.join(review_dir, ".latest.orig.md")
-    now = datetime.datetime.now()
-    stamp = now.strftime("%Y%m%d-%H%M%S")
-
-    # If you annotated the previous reply, keep that version instead of losing it,
-    # and add what you wrote to the running log in feedback.md.
-    if os.path.exists(latest) and os.path.exists(orig) and sha(latest) != sha(orig):
-        original = read_text(orig)
-        # Name it after the reply you annotated, so it sorts next to that reply's
-        # plain copy. The stamp comes from the untouched original, which you can't
-        # have edited by accident.
-        prev = STAMP_LINE.search(original)
-        if prev:
-            plain = find_history(history_dir, prev.group(1))
-            archived = f"{plain[:-3] if plain else prev.group(1)}-annotated.md"
-        else:
-            archived = f"{stamp}-prev-annotated.md"
-        shutil.copy2(latest, os.path.join(history_dir, archived))
-        mark_sent(review_dir, archived, sha(latest))  # logged below, so /feedback skips it
-        entry = log_entry(read_text(latest), original, archived)
-        if entry:
-            log = os.path.join(review_dir, "feedback.md")
-            new_log = not os.path.exists(log)
-            with open(log, "a", encoding="utf-8") as f:
-                if new_log:
-                    f.write("# Feedback log\n\nYour notes on each reply, oldest first.\n\n")
-                f.write(entry)
-
-    doc = render(prompt, messages, data.get("session_id", "?"), stamp, now)
-
-    for path in (latest, orig):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(doc)
-
-    if env_flag("REVIEW_KEEP_HISTORY", 1):
-        with open(os.path.join(history_dir, history_name(stamp, prompt, messages[0])), "w", encoding="utf-8") as f:
-            f.write(doc)
+    with locked(review_dir):
+        target = capture(review_dir, data.get("session_id") or "?", prompt, messages)
 
     words = prompt.lower().split()
     if "#noopen" in words:
         want_open = False
     elif "#open" in words:
         want_open = True
-    argv = open_command(latest) if want_open else None
+    argv = open_command(target) if want_open else None
     if argv:
         subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def capture(review_dir, session_id, prompt, messages):
+    """Save the reply; return the latest.md to open."""
+    history_dir = os.path.join(review_dir, "history")
+    os.makedirs(history_dir, exist_ok=True)
+    now = datetime.datetime.now()
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    own = os.path.join(thread_dir(review_dir, session_id, prompt, messages[0], now), "latest.md")
+    latest = os.path.join(review_dir, "latest.md")
+
+    # If you annotated the previous reply, keep that version instead of losing it.
+    if is_annotated(own):
+        archive(review_dir, own, stamp)
+    # The shared latest.md may hold another conversation's reply. If you've marked
+    # it up and not sent it yet, leave it for that conversation's /feedback.
+    write_latest = True
+    if is_annotated(latest):
+        if owner_of(latest) in (session_id, None) or already_sent(review_dir, latest):
+            archive(review_dir, latest, stamp)
+        else:
+            write_latest = False
+
+    doc = render(prompt, messages, session_id, stamp, now)
+    for path in (own, latest) if write_latest else (own,):
+        write_text(path, doc)
+        write_text(orig_of(path), doc)
+
+    if env_flag("REVIEW_KEEP_HISTORY", 1):
+        name = unique(history_dir, history_name(stamp, prompt, messages[0]))
+        write_text(os.path.join(history_dir, name), doc)
+    return latest if write_latest else own
 
 
 if __name__ == "__main__":
