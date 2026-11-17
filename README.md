@@ -21,7 +21,22 @@ When the next reply replaces `latest.md`, your annotated copy is archived in
 to `.claude/review/feedback.md`, so you can look back over everything in one
 place.
 
-All three render natively in Obsidian (`%%…%%` is Obsidian's comment syntax:
+## Mark up an older reply
+
+Every reply is also saved in `history/`, named after the time and the first
+few words of your prompt, e.g. `20261116-101204-can-we-start-by-brainstorming.md`.
+To respond to an older reply, find it (in VS Code: Ctrl+P, then `hist brainstorm`),
+mark it up in place, and run `/feedback`. There's nothing to copy:
+`/feedback` uses the file you have open, then `latest.md` if you changed it, then
+the most recently edited history file. You can also name the file:
+`/feedback brainstorm`, `/feedback 101204` or a full path.
+
+`/feedback` rebuilds the untouched original from the session transcript, so it
+sees plain edits as well as markup. Claude Code deletes transcripts after
+`cleanupPeriodDays` (30 by default); for older replies only your markup and
+`# Feedback` notes are picked up.
+
+All three markup styles render natively in Obsidian (`%%…%%` is Obsidian's comment syntax:
 visible while editing, hidden in reading view).
 
 ## Install

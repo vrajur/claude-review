@@ -3,6 +3,20 @@
 Bump `version` in `.claude-plugin/plugin.json` with every release; Claude Code
 only refreshes an installed plugin when the version changes.
 
+## 0.5.0 - 2026-11-16
+
+- Mark up any reply in `history/` in place and run `/feedback`; no copying.
+  The untouched original is rebuilt from the session transcript, and your
+  marks and `# Feedback` notes go into `feedback.md` as usual.
+- `/feedback <file>` takes a path, a stamp (`203155`) or words from a history
+  filename (`brainstorm`). With no argument it uses the review file open in
+  your editor, then `latest.md` if changed, then the most recently edited
+  history file not yet sent.
+- History files are named `<time>-<first words of your prompt>.md`, so Ctrl+P
+  can find them. After a slash command, the first words of the reply are added
+  (`<time>-feedback-your-notes-are-all-under.md`), since `/feedback` alone
+  tells replies apart. Annotated copies follow: `<same name>-annotated.md`.
+
 ## 0.4.1 - 2026-10-26
 
 - `latest.md` captures everything Claude said since your prompt, not just the
